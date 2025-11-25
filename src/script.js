@@ -14,12 +14,14 @@ let markers = L.markerClusterGroup({
 
 let crashData = [];
 let chart;
+let timelineChart;
 
 async function loadData() {
   const res = await fetch("data/crashes.json");
   crashData = await res.json();
   renderMarkers(crashData);
   updateAnalytics(crashData);
+  updateTimeline(crashData);
 }
 
 function renderMarkers(data) {

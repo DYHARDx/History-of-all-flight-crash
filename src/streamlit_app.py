@@ -61,27 +61,77 @@ st.markdown("""
 
 @st.cache_data
 def load_data():
-    try:
-        df = pd.read_csv('data\dataset.csv.csv', encoding="utf-8")
-    except:
-        df = pd.read_csv('data\dataset.csv.csv', encoding="latin1")
+    """Load aviation crash data with fallback mechanisms for different data sources"""
+    # Try to load the detailed CSV dataset first
+    csv_paths = [
+        'data/dataset.csv.csv',
+        '../data/dataset.csv.csv',
+        'dataset.csv.csv'
+    ]
     
-    df.columns = [c.strip() for c in df.columns]
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    df = df.dropna(subset=['Date'])
-    df['year'] = df['Date'].dt.year
-    df['month'] = df['Date'].dt.month
-    df['month_name'] = df['Date'].dt.strftime('%b')
+    df = None
+    for path in csv_paths:
+        try:
+            df = pd.read_csv(path, encoding="utf-8")
+            break
+        except FileNotFoundError:
+            try:
+                df = pd.read_csv(path, encoding="latin1")
+                break
+            except FileNotFoundError:
+                continue
     
+    # If CSV loading fails, try JSON as fallback
+    if df is None:
+        json_paths = [
+            'data/crashes.json',
+            '../data/crashes.json',
+            'crashes.json'
+        ]
+        
+        for path in json_paths:
+            try:
+                df = pd.read_json(path)
+                # Convert JSON structure to match expected CSV structure
+                df['Date'] = pd.to_datetime(df['Year'].astype(str) + '-01-01', errors='coerce')
+                df['Aboard'] = df.get('Fatalities', pd.Series([0]*len(df)))
+                df['Ground'] = pd.Series([0]*len(df))
+                df['Operator'] = 'Unknown'
+                df['Summary'] = 'No details available'
+                break
+            except FileNotFoundError:
+                continue
+    
+    # If both fail, raise an error
+    if df is None:
+        raise FileNotFoundError("Could not find any data file (dataset.csv.csv or crashes.json)")
+    
+    # Process the dataframe regardless of source
+    if 'Date' in df.columns:
+        df.columns = [c.strip() for c in df.columns]
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df = df.dropna(subset=['Date'])
+        df['year'] = df['Date'].dt.year
+        df['month'] = df['Date'].dt.month
+        df['month_name'] = df['Date'].dt.strftime('%b')
+    else:
+        # Handle case where Date wasn't created from JSON
+        df['year'] = df.get('Year', df.get('year', pd.Series([0]*len(df))))
+        df['Date'] = pd.to_datetime(df['year'].astype(str) + '-01-01', errors='coerce')
+        df['month'] = 1
+        df['month_name'] = 'Jan'
+    
+    # Ensure numeric columns
     for col in ['Aboard', 'Fatalities', 'Ground']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
             df[col] = df[col].fillna(0)
     
-    df['Operator'] = df['Operator'].fillna('Unknown').astype(str)
-    df['Location'] = df['Location'].fillna('Unknown').astype(str)
-    df['Type'] = df['Type'].fillna('Unknown').astype(str)
-    df['Summary'] = df['Summary'].fillna('No details available').astype(str)
+    # Fill missing string columns
+    df['Operator'] = df.get('Operator', df.get('Type', pd.Series(['Unknown']*len(df)))).fillna('Unknown').astype(str)
+    df['Location'] = df.get('Location', pd.Series(['Unknown']*len(df))).fillna('Unknown').astype(str)
+    df['Type'] = df.get('Type', pd.Series(['Unknown']*len(df))).fillna('Unknown').astype(str)
+    df['Summary'] = df.get('Summary', pd.Series(['No details available']*len(df))).fillna('No details available').astype(str)
     
     # Add coordinates
     coords_map = {
